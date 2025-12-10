@@ -1,19 +1,39 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <title>Teclado Numérico</title>
+  <style>
+    button {
+      width: 50px;
+      height: 50px;
+      font-size: 20px;
+      margin: 5px;
+    }
+  </style>
 </head>
 <body>
-    <h1 id="titulo">Hola, este es un ejemplo de documento HTML.</h1>
-    <p id="paragrafo"></p>
-    <main id="main">Main</main>
+  <h2>Teclado Numérico</h2>
+  <div id="teclado"></div>
 
-<img id="Mascota" src="Captura de pantalla 2025-11-20 a les 18.03.25.png" alt="nombre de la imagen">
+  <script>
+    const teclado = document.getElementById("teclado");
 
-    <script src="Ex1.js">
-        
-    </script>
+    for (let i = 1; i <= 9; i++) {
+      const boton = document.createElement("button");
+      boton.textContent = i;
+      teclado.appendChild(boton);
+    
+      // Salto de línea cada 3 botones
+      if (i % 3 === 0) {
+        teclado.appendChild(document.createElement("br"));
+      }
+        // Colorear botones pares
+      if (i % 2 ==0) {
+        boton.style.backgroundColor = "lightblue";
+      }
+    }
+  </script>
+  
 </body>
 </html>
