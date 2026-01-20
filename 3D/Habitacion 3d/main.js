@@ -29,81 +29,58 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 1);
 dirLight.position.set(5, 10, 5);
 scene.add(dirLight);
 
-// =================================================
-// 👉 OBJETOS 3D (2 OBJ diferentes)
-// =================================================
-let objects = []; // array para todos los objetos interactivos
-
+// --- E. OBJETO 3D ---
+let objects = [];
 const loader = new OBJLoader();
 
-// Cargar primer OBJ
-// Cargar primer OBJ
 loader.load(
     './models/Prueba.obj',
     (obj1) => {
-        obj1.position.set(-2, 0, 0);
+        obj1.position.set(0, 0, 0);
         obj1.scale.set(1, 1, 1);
-        obj1.name = "Objeto 1"; // <-- asignamos nombre
+        obj1.name = "Cube.001"; // nombre del objeto que quieres clickar
         scene.add(obj1);
         objects.push(obj1);
     },
     undefined,
-    (error) => console.error('Error cargando obj1', error)
+    (error) => console.error('Error cargando OBJ', error)
 );
 
-// Cargar segundo OBJ
-loader.load(
-    './models/Prueba2.obj',
-    (obj2) => {
-        obj2.position.set(2, 0, 0);
-        obj2.scale.set(1, 1, 1);
-        obj2.name = "Objeto 2"; // <-- asignamos nombre
-        scene.add(obj2);
-        objects.push(obj2);
-    },
-    undefined,
-    (error) => console.error('Error cargando obj2', error)
-);
-
-
-// --- E. CONTROLES ---
+// --- F. CONTROLES ---
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.minPolarAngle = Math.PI / 3; // ángulo vertical fijo
+controls.minPolarAngle = Math.PI / 3;
 controls.maxPolarAngle = Math.PI / 3;
 controls.minDistance = 3;
 controls.maxDistance = 15;
 
-// --- F. RAYCASTER ---
+// --- G. RAYCASTER ---
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let targetPosition = null;
 let targetLookAt = null;
 const camSpeed = 0.05;
+let cameraLocked = false; // bandera para bloquear controles
 
 window.addEventListener('click', (event) => {
-    // Coordenadas normalizadas del ratón
+    if (cameraLocked) return; // si ya está bloqueada, no hacemos nada
+
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
     raycaster.setFromCamera(mouse, camera);
 
-    const intersects = raycaster.intersectObjects(objects, true); // true para hijos
+    const intersects = raycaster.intersectObjects(objects, true);
     if (intersects.length > 0) {
-        // Obtenemos el mesh intersectado
         let clickedObject = intersects[0].object;
-
-        // Subir hasta encontrar el objeto con nombre
         while (clickedObject && !clickedObject.name && clickedObject.parent) {
             clickedObject = clickedObject.parent;
         }
-
-        if (!clickedObject) return; // seguridad
+        if (!clickedObject) return;
 
         console.log(`¡Has pulsado ${clickedObject.name}!`);
 
-        // Solo mover la cámara si es Objeto 1
-        if (clickedObject.name == "Cube") {
+        if (clickedObject.name === "Cube.001") {
             targetPosition = new THREE.Vector3(
                 clickedObject.position.x,
                 clickedObject.position.y + 2,
@@ -113,21 +90,47 @@ window.addEventListener('click', (event) => {
         }
     }
 });
+window.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        // Restaurar posición inicial
+        targetPosition = null;                 // 🔹 IMPORTANTE: dejar de interpolar
+        targetLookAt = null;                   // 🔹 dejar de interpolar
+        camera.position.copy(initialCameraPosition);
+        camera.lookAt(initialCameraLookAt);
+
+        // Reactivar controles
+        controls.enabled = true;
+        controls.target.copy(initialCameraLookAt);
+        cameraLocked = false;
+        clickEnabled = true;
+        const initialCameraPosition = camera.position.clone();
+        const initialCameraLookAt = new THREE.Vector3(0, 0, 0);
+
+    }
+});
 
 
 
 
-
-// --- G. ANIMACIÓN ---
+// --- H. ANIMACIÓN ---
 function animate() {
     requestAnimationFrame(animate);
 
-    // Rotación opcional de objetos
+    // Rotación opcional del objeto
 
 
+    // Movimiento de cámara hacia el objetivo
     if (targetPosition && targetLookAt) {
         camera.position.lerp(targetPosition, camSpeed);
         camera.lookAt(targetLookAt);
+
+        // Si estamos muy cerca del objetivo, bloqueamos la cámara
+        if (camera.position.distanceTo(targetPosition) < 0.01) {
+            camera.position.copy(targetPosition);
+            camera.lookAt(targetLookAt);
+            controls.enabled = false; // 🔒 bloqueamos controles
+            cameraLocked = true;
+        }
     }
 
     controls.update();
@@ -135,7 +138,7 @@ function animate() {
 }
 animate();
 
-// --- H. RESIZE ---
+// --- I. RESIZE ---
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
