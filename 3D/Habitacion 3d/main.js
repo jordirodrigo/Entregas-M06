@@ -40,11 +40,21 @@ let objects = [];
 const loader = new OBJLoader();
 
 loader.load(
-    './models/Prueba.obj',
+    './models/pruebasepa1.obj',
     (obj1) => {
         obj1.position.set(0, 0, 0);
         obj1.scale.set(1, 1, 1);
-        obj1.name = "Cube.001";
+        scene.add(obj1);
+        objects.push(obj1);
+    },
+    undefined,
+    (error) => console.error('Error cargando OBJ', error)
+);
+loader.load(
+    './models/pruebasepa2.obj',
+    (obj1) => {
+        obj1.position.set(0, 0, 0);
+        obj1.scale.set(1, 1, 1);
         scene.add(obj1);
         objects.push(obj1);
     },
