@@ -13,8 +13,14 @@ const camera = new THREE.PerspectiveCamera(
     0.1,
     1000
 );
-camera.position.set(0, 8, 5);
+camera.position.set(0, 0, 5);
 camera.lookAt(0, 0, 0);
+
+// Guardamos posición inicial y lookAt
+const initialCameraPosition = camera.position.clone();
+const initialCameraLookAt = new THREE.Vector3(0, 0, 0);
+let initialMinPolarAngle = Math.PI / 3;
+let initialMaxPolarAngle = Math.PI / 3;
 
 // --- C. RENDERER ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -38,7 +44,7 @@ loader.load(
     (obj1) => {
         obj1.position.set(0, 0, 0);
         obj1.scale.set(1, 1, 1);
-        obj1.name = "Cube.001"; // nombre del objeto que quieres clickar
+        obj1.name = "Cube.001";
         scene.add(obj1);
         objects.push(obj1);
     },
@@ -49,25 +55,34 @@ loader.load(
 // --- F. CONTROLES ---
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.minPolarAngle = Math.PI / 3;
-controls.maxPolarAngle = Math.PI / 3;
+controls.minPolarAngle = initialMinPolarAngle;
+controls.maxPolarAngle = initialMaxPolarAngle;
 controls.minDistance = 3;
 controls.maxDistance = 15;
 
-// --- G. RAYCASTER ---
+// ⚡ Desactivar clic derecho para mover la cámara
+controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: null
+};
+
+// --- G. VARIABLES DE TRANSICIÓN ---
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let targetPosition = null;
 let targetLookAt = null;
-const camSpeed = 0.05;
-let cameraLocked = false; // bandera para bloquear controles
+let polarTarget = null; 
+let returningToInitial = false; // indica si estamos regresando con Enter
+const step = 0.05;
+let cameraLocked = false;
 
+// --- CLICK ---
 window.addEventListener('click', (event) => {
-    if (cameraLocked) return; // si ya está bloqueada, no hacemos nada
+    if (cameraLocked || returningToInitial) return;
 
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
     raycaster.setFromCamera(mouse, camera);
 
     const intersects = raycaster.intersectObjects(objects, true);
@@ -78,64 +93,80 @@ window.addEventListener('click', (event) => {
         }
         if (!clickedObject) return;
 
-        console.log(`¡Has pulsado ${clickedObject.name}!`);
-
         if (clickedObject.name === "Cube.001") {
+            // Objetivo de polarAngle suave
+            polarTarget = Math.PI / 2;
+
+            // Posición final frente al objeto
+            const distance = 5;
             targetPosition = new THREE.Vector3(
                 clickedObject.position.x,
-                clickedObject.position.y + 2,
-                clickedObject.position.z + 2
+                clickedObject.position.y,
+                clickedObject.position.z + distance
             );
+
+            // LookAt constante
             targetLookAt = clickedObject.position.clone();
+
+            // Bloqueamos controles mientras se mueve
+            controls.enabled = false;
+            cameraLocked = false;
         }
     }
 });
+
+// --- ENTER: volver a posición inicial ---
 window.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-        // Restaurar posición inicial
-        targetPosition = null;                 // 🔹 IMPORTANTE: dejar de interpolar
-        targetLookAt = null;                   // 🔹 dejar de interpolar
-        camera.position.copy(initialCameraPosition);
-        camera.lookAt(initialCameraLookAt);
+    if (event.key === 'Enter' && !returningToInitial) {
+        // Iniciamos la transición de regreso
+        targetPosition = initialCameraPosition.clone();
+        targetLookAt = initialCameraLookAt.clone();
+        polarTarget = initialMinPolarAngle; // regresamos a los límites originales
+        returningToInitial = true;
 
-        // Reactivar controles
+        // Reactivar controles al terminar
         controls.enabled = true;
-        controls.target.copy(initialCameraLookAt);
         cameraLocked = false;
-        clickEnabled = true;
-        const initialCameraPosition = camera.position.clone();
-        const initialCameraLookAt = new THREE.Vector3(0, 0, 0);
-
     }
 });
-
-
-
 
 // --- H. ANIMACIÓN ---
 function animate() {
     requestAnimationFrame(animate);
 
-    // Rotación opcional del objeto
+    // 🔹 Transición suave de polarAngle
+    if (polarTarget !== null) {
+        const t = 0.05;
+        controls.minPolarAngle = THREE.MathUtils.lerp(controls.minPolarAngle, polarTarget, t);
+        controls.maxPolarAngle = THREE.MathUtils.lerp(controls.maxPolarAngle, polarTarget, t);
+        if (Math.abs(controls.minPolarAngle - polarTarget) < 0.001) {
+            controls.minPolarAngle = polarTarget;
+            controls.maxPolarAngle = polarTarget;
+            polarTarget = null;
+        }
+    }
 
-
-    // Movimiento de cámara hacia el objetivo
+    // 🔹 Movimiento de cámara hacia el objetivo
     if (targetPosition && targetLookAt) {
-        camera.position.lerp(targetPosition, camSpeed);
-        camera.lookAt(targetLookAt);
-
-        // Si estamos muy cerca del objetivo, bloqueamos la cámara
-        if (camera.position.distanceTo(targetPosition) < 0.01) {
+        const direction = new THREE.Vector3().subVectors(targetPosition, camera.position);
+        if (direction.length() <= step) {
             camera.position.copy(targetPosition);
             camera.lookAt(targetLookAt);
-            controls.enabled = false; // 🔒 bloqueamos controles
-            cameraLocked = true;
+            cameraLocked = !returningToInitial;
+            if (returningToInitial) returningToInitial = false;
+            targetPosition = null;
+            targetLookAt = null;
+        } else {
+            direction.normalize();
+            camera.position.add(direction.multiplyScalar(step));
+            camera.lookAt(targetLookAt);
         }
     }
 
     controls.update();
     renderer.render(scene, camera);
 }
+
 animate();
 
 // --- I. RESIZE ---
