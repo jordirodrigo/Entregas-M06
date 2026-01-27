@@ -5,11 +5,14 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // CONFIGURACIÓN
 // ====================================
 const pasoGrados = 12;           // ángulo base por cilindro
+const deltaRot = 0.005; // velocidad de rotación
+const deltaX = 0.02;    // velocidad lateral más rápida
+
 const ejeRotacion = new THREE.Vector3(1,0,0);
 function gradosARadianes(grados){ return grados * (Math.PI/180); }
 
 // Shift lateral del GLB según par/impar
-const desplazamientoX = 0.5; // ajusta cuanto quieres mover el GLB lateralmente
+const desplazamientoX = 0.6; // ajusta cuanto quieres mover el GLB lateralmente
 
 // ====================================
 // ESCENA, CÁMARA, RENDERER
@@ -151,29 +154,28 @@ window.addEventListener('keydown', (event)=>{
 function animate(){
     requestAnimationFrame(animate);
 
-    if(rotating){
-        const delta = 0.003; // velocidad por frame
-
-        // Animación rotación
-        const diffRot = targetRotation - pivot.rotation.x;
-        if(Math.abs(diffRot)<=delta){
-            pivot.rotation.x = targetRotation;
-        } else {
-            pivot.rotation.x += delta * Math.sign(diffRot);
-        }
-
-        // Animación lateral
-        const diffX = targetX - pivot.position.x;
-        if(Math.abs(diffX)<=delta){
-            pivot.position.x = targetX;
-        } else {
-            pivot.position.x += delta * Math.sign(diffX);
-        }
-
-        if(Math.abs(diffRot)<=delta && Math.abs(diffX)<=delta){
-            rotating = false;
-        }
+if(rotating){
+    // Rotación
+    const diffRot = targetRotation - pivot.rotation.x;
+    if(Math.abs(diffRot) <= deltaRot){
+        pivot.rotation.x = targetRotation;
+    } else {
+        pivot.rotation.x += deltaRot * Math.sign(diffRot);
     }
+
+    // Desplazamiento lateral
+    const diffX = targetX - pivot.position.x;
+    if(Math.abs(diffX) <= deltaX){
+        pivot.position.x = targetX;
+    } else {
+        pivot.position.x += deltaX * Math.sign(diffX);
+    }
+
+    if(Math.abs(diffRot) <= deltaRot && Math.abs(diffX) <= deltaX){
+        rotating = false;
+    }
+}
+
 
     renderer.render(scene, camera);
 }
