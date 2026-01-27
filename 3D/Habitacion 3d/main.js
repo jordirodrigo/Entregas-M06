@@ -1,187 +1,189 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// --- A. ESCENA ---
+// ====================================
+// CONFIGURACIÓN
+// ====================================
+const pasoGrados = 12;           // ángulo base por cilindro
+const ejeRotacion = new THREE.Vector3(1,0,0);
+function gradosARadianes(grados){ return grados * (Math.PI/180); }
+
+// Shift lateral del GLB según par/impar
+const desplazamientoX = 0.5; // ajusta cuanto quieres mover el GLB lateralmente
+
+// ====================================
+// ESCENA, CÁMARA, RENDERER
+// ====================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x202020);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
+camera.position.set(0, 2, 5);
 
-// --- B. CÁMARA ---
-const camera = new THREE.PerspectiveCamera(
-    75,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    1000
-);
-camera.position.set(0, 0, 5);
-camera.lookAt(0, 0, 0);
-
-// Guardamos posición inicial y lookAt
-const initialCameraPosition = camera.position.clone();
-const initialCameraLookAt = new THREE.Vector3(0, 0, 0);
-let initialMinPolarAngle = Math.PI / 3;
-let initialMaxPolarAngle = Math.PI / 3;
-
-// --- C. RENDERER ---
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-// --- D. LUCES ---
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-scene.add(ambientLight);
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(5,10,7.5);
+scene.add(directionalLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-dirLight.position.set(5, 10, 5);
-scene.add(dirLight);
-
-// --- E. OBJETO 3D ---
-let objects = [];
-const loader = new OBJLoader();
-
-loader.load(
-    './models/pruebasepa1.obj',
-    (obj1) => {
-        obj1.position.set(0, 0, 0);
-        obj1.scale.set(1, 1, 1);
-        scene.add(obj1);
-        objects.push(obj1);
-    },
-    undefined,
-    (error) => console.error('Error cargando OBJ', error)
-);
-loader.load(
-    './models/pruebasepa2.obj',
-    (obj1) => {
-        obj1.position.set(0, 0, 0);
-        obj1.scale.set(1, 1, 1);
-        scene.add(obj1);
-        objects.push(obj1);
-    },
-    undefined,
-    (error) => console.error('Error cargando OBJ', error)
-);
-
-// --- F. CONTROLES ---
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.minPolarAngle = initialMinPolarAngle;
-controls.maxPolarAngle = initialMaxPolarAngle;
-controls.minDistance = 3;
-controls.maxDistance = 15;
-
-// ⚡ Desactivar clic derecho para mover la cámara
-controls.mouseButtons = {
-    LEFT: THREE.MOUSE.ROTATE,
-    MIDDLE: THREE.MOUSE.DOLLY,
-    RIGHT: null
-};
-
-// --- G. VARIABLES DE TRANSICIÓN ---
+// ====================================
+// RAYCASTER
+// ====================================
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
-let targetPosition = null;
-let targetLookAt = null;
-let polarTarget = null; 
-let returningToInitial = false; // indica si estamos regresando con Enter
-const step = 0.05;
-let cameraLocked = false;
 
-// --- CLICK ---
-window.addEventListener('click', (event) => {
-    if (cameraLocked || returningToInitial) return;
+// ====================================
+// VARIABLES
+// ====================================
+let rootObj;
+let pivot = new THREE.Object3D();
+scene.add(pivot);
+let objectNames = [];
+let currentName = null; // nombre del cilindro actual
+let targetRotation = 0;
+let targetX = 0; // posición X objetivo para animación lateral
+let rotating = false;
 
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+// Posición base del pivot (centro) para calcular desplazamiento lateral relativo
+let basePositionX = 0;
+
+// ====================================
+// STACK PARA UNDO MÚLTIPLE
+// ====================================
+let historyStack = []; // cada elemento: {name, rotation, posX}
+
+// ====================================
+// CARGA DEL GLB
+// ====================================
+const loader = new GLTFLoader();
+loader.load('./models/prueba.glb', function(gltf){
+    rootObj = gltf.scene;
+
+    // centramos pivote
+    const box = new THREE.Box3().setFromObject(rootObj);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    rootObj.position.sub(center);
+    pivot.add(rootObj);
+    pivot.position.copy(center);
+
+    // Guardamos posición central
+    basePositionX = pivot.position.x;
+
+    // detectamos cilindros
+    rootObj.traverse(child=>{
+        if(child.isMesh && /^\d+$/.test(child.name)){
+            objectNames.push(child.name);
+            child.material.side = THREE.DoubleSide;
+        }
+    });
+
+    // primer cilindro como actual
+    if(objectNames.length>0) currentName = objectNames[0];
+
+    console.log("Cilindros detectados:", objectNames);
+
+}, undefined, err=>console.error(err));
+
+// ====================================
+// CLICK
+// ====================================
+window.addEventListener('click', (event)=>{
+    if(!rootObj || rotating) return;
+
+    mouse.x = (event.clientX / window.innerWidth)*2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight)*2 + 1;
+
     raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(rootObj.children, true);
+    if(intersects.length === 0) return;
 
-    const intersects = raycaster.intersectObjects(objects, true);
-    if (intersects.length > 0) {
-        let clickedObject = intersects[0].object;
-        while (clickedObject && !clickedObject.name && clickedObject.parent) {
-            clickedObject = clickedObject.parent;
-        }
-        if (!clickedObject) return;
+    let selectedMesh = intersects[0].object;
+    while(selectedMesh.parent && selectedMesh.parent !== rootObj && !objectNames.includes(selectedMesh.name)){
+        selectedMesh = selectedMesh.parent;
+    }
+    if(!objectNames.includes(selectedMesh.name)) return;
 
-        if (clickedObject.name === "Cube.001") {
-            // Objetivo de polarAngle suave
-            polarTarget = Math.PI / 2;
+    console.log("Cilindro clicado:", selectedMesh.name);
 
-            // Posición final frente al objeto
-            const distance = 5;
-            targetPosition = new THREE.Vector3(
-                clickedObject.position.x,
-                clickedObject.position.y,
-                clickedObject.position.z + distance
-            );
+    const newName = selectedMesh.name;
+    let diff = parseInt(newName) - parseInt(currentName);
+    if(diff === 0) return; // mismo cilindro
 
-            // LookAt constante
-            targetLookAt = clickedObject.position.clone();
+    const rotationDegrees = pasoGrados * Math.abs(diff);
+    const rotationRads = gradosARadianes(rotationDegrees);
+    targetRotation = pivot.rotation.x + (diff > 0 ? rotationRads : -rotationRads);
 
-            // Bloqueamos controles mientras se mueve
-            controls.enabled = false;
-            cameraLocked = false;
-        }
+    // Guardamos estado actual en el stack para undo múltiple
+    historyStack.push({name: currentName, rotation: pivot.rotation.x, posX: pivot.position.x});
+
+    // ====================================
+    // SHIFT LATERAL según par/impar relativo al centro
+    // ====================================
+    const numero = parseInt(newName);
+    targetX = (numero % 2 === 0) ? basePositionX + desplazamientoX : basePositionX - desplazamientoX;
+
+    rotating = true;
+
+    // Actualizamos currentName
+    currentName = newName;
+});
+
+// ====================================
+// TECLA ENTER PARA VOLVER ATRÁS
+// ====================================
+window.addEventListener('keydown', (event)=>{
+    if(event.key === 'Enter' && historyStack.length > 0 && !rotating){
+        const last = historyStack.pop();
+        console.log("Volviendo al cilindro anterior:", last.name);
+        targetRotation = last.rotation; // animamos de vuelta
+        targetX = last.posX;            // restauramos posición X
+        currentName = last.name;
+        rotating = true;
     }
 });
 
-// --- ENTER: volver a posición inicial ---
-window.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !returningToInitial) {
-        // Iniciamos la transición de regreso
-        targetPosition = initialCameraPosition.clone();
-        targetLookAt = initialCameraLookAt.clone();
-        polarTarget = initialMinPolarAngle; // regresamos a los límites originales
-        returningToInitial = true;
-
-        // Reactivar controles al terminar
-        controls.enabled = true;
-        cameraLocked = false;
-    }
-});
-
-// --- H. ANIMACIÓN ---
-function animate() {
+// ====================================
+// ANIMACIÓN SUAVE
+// ====================================
+function animate(){
     requestAnimationFrame(animate);
 
-    // 🔹 Transición suave de polarAngle
-    if (polarTarget !== null) {
-        const t = 0.05;
-        controls.minPolarAngle = THREE.MathUtils.lerp(controls.minPolarAngle, polarTarget, t);
-        controls.maxPolarAngle = THREE.MathUtils.lerp(controls.maxPolarAngle, polarTarget, t);
-        if (Math.abs(controls.minPolarAngle - polarTarget) < 0.001) {
-            controls.minPolarAngle = polarTarget;
-            controls.maxPolarAngle = polarTarget;
-            polarTarget = null;
-        }
-    }
+    if(rotating){
+        const delta = 0.003; // velocidad por frame
 
-    // 🔹 Movimiento de cámara hacia el objetivo
-    if (targetPosition && targetLookAt) {
-        const direction = new THREE.Vector3().subVectors(targetPosition, camera.position);
-        if (direction.length() <= step) {
-            camera.position.copy(targetPosition);
-            camera.lookAt(targetLookAt);
-            cameraLocked = !returningToInitial;
-            if (returningToInitial) returningToInitial = false;
-            targetPosition = null;
-            targetLookAt = null;
+        // Animación rotación
+        const diffRot = targetRotation - pivot.rotation.x;
+        if(Math.abs(diffRot)<=delta){
+            pivot.rotation.x = targetRotation;
         } else {
-            direction.normalize();
-            camera.position.add(direction.multiplyScalar(step));
-            camera.lookAt(targetLookAt);
+            pivot.rotation.x += delta * Math.sign(diffRot);
+        }
+
+        // Animación lateral
+        const diffX = targetX - pivot.position.x;
+        if(Math.abs(diffX)<=delta){
+            pivot.position.x = targetX;
+        } else {
+            pivot.position.x += delta * Math.sign(diffX);
+        }
+
+        if(Math.abs(diffRot)<=delta && Math.abs(diffX)<=delta){
+            rotating = false;
         }
     }
 
-    controls.update();
     renderer.render(scene, camera);
 }
-
 animate();
 
-// --- I. RESIZE ---
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+// ====================================
+// AJUSTE DE VENTANA
+// ====================================
+window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
