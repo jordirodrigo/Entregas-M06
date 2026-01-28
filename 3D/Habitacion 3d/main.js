@@ -4,31 +4,36 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // ====================================
 // CONFIGURACIÓN
 // ====================================
-const pasoGrados = 12;           // ángulo base por cilindro
-const deltaRot = 0.005; // velocidad de rotación
-const deltaX = 0.02;    // velocidad lateral más rápida
+const pasoGrados = 12;
+const desplazamientoX = 0.9;
 
-const ejeRotacion = new THREE.Vector3(1,0,0);
-function gradosARadianes(grados){ return grados * (Math.PI/180); }
+// Factores de interpolación
+const rotLerp = 0.08;   // rotación (más bajo = más lento)
+const xLerp   = 0.10;   // desplazamiento lateral (más alto = más rápido)
 
-// Shift lateral del GLB según par/impar
-const desplazamientoX = 0.6; // ajusta cuanto quieres mover el GLB lateralmente
+function gradosARadianes(g){ return g * Math.PI / 180; }
 
 // ====================================
 // ESCENA, CÁMARA, RENDERER
 // ====================================
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
+
+const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    100
+);
 camera.position.set(0, 2, 5);
 
-const renderer = new THREE.WebGLRenderer({antialias:true});
+const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-directionalLight.position.set(5,10,7.5);
-scene.add(directionalLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+dirLight.position.set(5,10,7.5);
+scene.add(dirLight);
 
 // ====================================
 // RAYCASTER
@@ -42,28 +47,25 @@ const mouse = new THREE.Vector2();
 let rootObj;
 let pivot = new THREE.Object3D();
 scene.add(pivot);
-let objectNames = [];
-let currentName = null; // nombre del cilindro actual
-let targetRotation = 0;
-let targetX = 0; // posición X objetivo para animación lateral
-let rotating = false;
 
-// Posición base del pivot (centro) para calcular desplazamiento lateral relativo
+let objectNames = [];
+let currentName = null;
+
+let targetRotation = 0;
+let targetX = 0;
 let basePositionX = 0;
 
 // ====================================
-// STACK PARA UNDO MÚLTIPLE
+// STACK UNDO
 // ====================================
-let historyStack = []; // cada elemento: {name, rotation, posX}
+let historyStack = []; // { name, rotation, posX }
 
 // ====================================
-// CARGA DEL GLB
+// CARGA GLB
 // ====================================
-const loader = new GLTFLoader();
-loader.load('./models/prueba.glb', function(gltf){
+new GLTFLoader().load('./models/prueba.glb', gltf => {
     rootObj = gltf.scene;
 
-    // centramos pivote
     const box = new THREE.Box3().setFromObject(rootObj);
     const center = new THREE.Vector3();
     box.getCenter(center);
@@ -72,120 +74,100 @@ loader.load('./models/prueba.glb', function(gltf){
     pivot.add(rootObj);
     pivot.position.copy(center);
 
-    // Guardamos posición central
     basePositionX = pivot.position.x;
+    targetX = basePositionX;
 
-    // detectamos cilindros
-    rootObj.traverse(child=>{
+    rootObj.traverse(child => {
         if(child.isMesh && /^\d+$/.test(child.name)){
             objectNames.push(child.name);
             child.material.side = THREE.DoubleSide;
         }
     });
 
-    // primer cilindro como actual
-    if(objectNames.length>0) currentName = objectNames[0];
+    if(objectNames.length) currentName = objectNames[0];
 
-    console.log("Cilindros detectados:", objectNames);
-
-}, undefined, err=>console.error(err));
+    console.log('Cilindros detectados:', objectNames);
+});
 
 // ====================================
-// CLICK
+// CLICK (NO BLOQUEANTE)
 // ====================================
-window.addEventListener('click', (event)=>{
-    if(!rootObj || rotating) return;
+window.addEventListener('click', e => {
+    if(!rootObj) return;
 
-    mouse.x = (event.clientX / window.innerWidth)*2 - 1;
-    mouse.y = -(event.clientY / window.innerHeight)*2 + 1;
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(rootObj.children, true);
-    if(intersects.length === 0) return;
+    const hits = raycaster.intersectObjects(rootObj.children, true);
+    if(!hits.length) return;
 
-    let selectedMesh = intersects[0].object;
-    while(selectedMesh.parent && selectedMesh.parent !== rootObj && !objectNames.includes(selectedMesh.name)){
-        selectedMesh = selectedMesh.parent;
+    let obj = hits[0].object;
+    while(obj.parent && obj.parent !== rootObj && !objectNames.includes(obj.name)){
+        obj = obj.parent;
     }
-    if(!objectNames.includes(selectedMesh.name)) return;
+    if(!objectNames.includes(obj.name)) return;
 
-    console.log("Cilindro clicado:", selectedMesh.name);
+    const newName = obj.name;
+    const diff = parseInt(newName) - parseInt(currentName);
+    if(diff === 0) return;
 
-    const newName = selectedMesh.name;
-    let diff = parseInt(newName) - parseInt(currentName);
-    if(diff === 0) return; // mismo cilindro
+    // Guardamos estado actual (targets, no valores actuales)
+    historyStack.push({
+        name: currentName,
+        rotation: targetRotation,
+        posX: targetX
+    });
 
-    const rotationDegrees = pasoGrados * Math.abs(diff);
-    const rotationRads = gradosARadianes(rotationDegrees);
-    targetRotation = pivot.rotation.x + (diff > 0 ? rotationRads : -rotationRads);
+    targetRotation += gradosARadianes(pasoGrados * diff);
 
-    // Guardamos estado actual en el stack para undo múltiple
-    historyStack.push({name: currentName, rotation: pivot.rotation.x, posX: pivot.position.x});
+    const num = parseInt(newName);
+    targetX = (num % 2 === 0)
+        ? basePositionX + desplazamientoX
+        : basePositionX - desplazamientoX;
 
-    // ====================================
-    // SHIFT LATERAL según par/impar relativo al centro
-    // ====================================
-    const numero = parseInt(newName);
-    targetX = (numero % 2 === 0) ? basePositionX + desplazamientoX : basePositionX - desplazamientoX;
-
-    rotating = true;
-
-    // Actualizamos currentName
     currentName = newName;
 });
 
 // ====================================
-// TECLA ENTER PARA VOLVER ATRÁS
+// ENTER = UNDO (ENCADENABLE)
 // ====================================
-window.addEventListener('keydown', (event)=>{
-    if(event.key === 'Enter' && historyStack.length > 0 && !rotating){
+window.addEventListener('keydown', e => {
+    if(e.key === 'Enter' && historyStack.length){
         const last = historyStack.pop();
-        console.log("Volviendo al cilindro anterior:", last.name);
-        targetRotation = last.rotation; // animamos de vuelta
-        targetX = last.posX;            // restauramos posición X
+        targetRotation = last.rotation;
+        targetX = last.posX;
         currentName = last.name;
-        rotating = true;
     }
 });
 
 // ====================================
-// ANIMACIÓN SUAVE
+// ANIMACIÓN (SIEMPRE ACTIVA)
 // ====================================
 function animate(){
     requestAnimationFrame(animate);
 
-if(rotating){
-    // Rotación
-    const diffRot = targetRotation - pivot.rotation.x;
-    if(Math.abs(diffRot) <= deltaRot){
-        pivot.rotation.x = targetRotation;
-    } else {
-        pivot.rotation.x += deltaRot * Math.sign(diffRot);
-    }
+    pivot.rotation.x = THREE.MathUtils.lerp(
+        pivot.rotation.x,
+        targetRotation,
+        rotLerp
+    );
 
-    // Desplazamiento lateral
-    const diffX = targetX - pivot.position.x;
-    if(Math.abs(diffX) <= deltaX){
-        pivot.position.x = targetX;
-    } else {
-        pivot.position.x += deltaX * Math.sign(diffX);
-    }
-
-    if(Math.abs(diffRot) <= deltaRot && Math.abs(diffX) <= deltaX){
-        rotating = false;
-    }
-}
-
+    pivot.position.x = THREE.MathUtils.lerp(
+        pivot.position.x,
+        targetX,
+        xLerp
+    );
 
     renderer.render(scene, camera);
 }
 animate();
 
 // ====================================
-// AJUSTE DE VENTANA
+// RESIZE
 // ====================================
 window.addEventListener('resize', ()=>{
-    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
